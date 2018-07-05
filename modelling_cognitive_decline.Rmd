@@ -1,0 +1,287 @@
+---
+title: "Modelling Cognitive Decline"
+author: "Bindoff, A."
+date: "created: 4 July 2018"
+output: ioslides_presentation
+autosize: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(reshape2)
+library(dplyr)
+library(ggplot2)
+library(lme4)
+library(purrr)
+library(brms)
+library(gridExtra)
+library(viridis)
+```
+
+## Mild Cognitive Impairment (MCI)
+
+- classification typically used in prospective studies of older adults
+- identify participants who are more likely to receive proximal diagnosis of dementia
+- increasingly used as a **clinical diagnosis**
+
+## Diagnostic criteria
+
+- sex- and age-adjusted z-scores from cognitive test/s
+- typically rely on a threshold; e.g one or more tests with $z < 1.5$
+- false positive rate vulnerable to inflation
+  - within-subject variation
+  - multiple testing
+  - population heterogeneity
+  
+## Change of states
+
+- prodromal phase of dementia indicating developing pathological state?
+- classification/diagnosis only accurate if *acyclic*
+  - no recovery, only progression to dementia
+
+## Improving classification/diagnosis
+
+- reducing error will improve power of studies
+- proposed solutions to date -
+  - "raise the bar"
+    - more stringent thresholds
+    - differentiating between scores on cognitive domains (which may not be orthogonal)
+  - state-space models?
+  
+## Proposed solution
+
+- wish list:
+  - single-subject or multiple-subject designs
+  - single-test or multiple-test designs (*that control Type 1 error!*)
+  - *must model a change from cognitively healthy to cognitive decline state*
+
+## Piece-wise linear regression?
+
+- assume cognitively normal at beginning of study
+- allow possibility of cognitive decline at some point
+- fit two slopes to data
+- find **break-point** that best fits
+  1. **data**
+  2. **a process of transition from healthy to cognitive decline!**
+  
+
+
+---
+```{r, echo = F}
+set.seed(1)
+
+tc <- function(x,t){
+  c(rep(0, x[3]), ((x[3]+1)-x[3]):(t-x[3]))*x[4]+ rnorm(t, x[1], sqrt(x[2]))
+}
+
+sim <- function(id, j = 9, t = 12, j.mu = 0, j.var = 1){
+  s <- data.frame(j.mu = j.mu,
+                  j.var = j.var,
+                  cp.t = sample(3:t-2, 1),
+                  cp.slope = -abs(rnorm(j, 0, 0.66)))
+  p <- melt(data.frame(apply(s, 1, function(x) tc(x, t))))
+  p$tau <- as.double(rep(c(1:t), j))
+  p$id <- id
+  p$cp <- s$cp.t
+  names(p) <- c("test", "score", "tau", "id", "cpT")
+  p
+}  
+
+j = 9
+j.mu = rnorm(j, 0, 1)
+j.var = rnorm(j, 0, 0.5)^2
+  
+p <- sim("A", j.mu = j.mu, j.var = j.var)
+p$cp <- 0
+
+
+```
+
+```{r, echo = FALSE}
+i_fit <- function(p, i){
+  p$cp <- ifelse(p$tau > i, p$tau - i, 0)
+  p$fit <- predict(lm(score ~ tau + cp, data = p), p)
+  p$facet <- i
+  p
+}
+
+p0 <- lapply(1:12, function(x) i_fit(p, x))
+p0 <- bind_rows(p0)
+
+
+ggplot(p0, aes(x = tau, y = score, colour = test, xintercept = facet)) +
+  geom_line(size = 3/4) +
+  scale_colour_viridis(discrete = TRUE) +
+  facet_wrap(~facet) +
+  geom_line(aes(y = fit), colour = "red", size = 1) +
+  geom_vline(data = p0, aes(xintercept = facet), linetype = "dashed") +
+  xlab("Testing phase") +
+  scale_x_continuous(breaks = c(1,3,5,7,9,11)) +
+  theme(panel.background = element_blank(),
+        axis.line = element_line()) 
+
+
+```
+
+---
+
+```{r, echo = TRUE}
+loss <- function(i){
+  p$cp0 <- ifelse(p$tau > i, p$tau - i, 0)
+  deviance(lmer(score ~ tau + cp0 + (tau + cp0|test), data = p))
+}
+
+which.min(sapply(unique(p$tau), loss))
+```
+## Problems
+
+Fitting the data is easy (OLS, maximum-likelihood), but maximising $p(y|m_i)$ is not guaranteed to find the break-point that marks the beginning of cognitive decline (if cognitive decline is even present).
+
+---
+
+```{r, echo = F, message = F, warning = F}
+
+set.seed(1)
+
+
+tc0 <- function(x){
+  c(x[3]*c(1,2,3), x[4]*c(1,2,3), x[5]*c(1,2,3)) + rnorm(9, x[1], sqrt(x[2]))
+}
+
+
+sim0 <- function(id, j = 9, t = 9, j.mu = 0, j.var = 1){  # change-point can lead to positive or negative slope
+  s <- data.frame(j.mu = j.mu,
+                  j.var = j.var,
+                  slope1 = sample(c(-1, 1), 1)*abs(rnorm(j, 0, 3/4)),
+                  slope2 = sample(c(-1, 1), 1)*abs(rnorm(j, 0, 3/4)),
+                  slope3 = sample(c(-1, 1), 1)*abs(rnorm(j, 0, 3/4)))
+  p <- melt(data.frame(apply(s, 1, function(x) tc0(x))))
+  p$tau <- as.double(rep(c(1:t), j))
+  p$id <- id
+  p$cp <- 0
+  names(p) <- c("test", "score", "tau", "id", "cpT")
+  p
+}  
+t = 12
+j = 9
+j.mu = rnorm(j, 0, 1)
+j.var = rnorm(j, 0, .5)^2
+#j.var = sample(c(0.01, 2), j, replace = T)
+
+p0 <- map(c("A", "B", "C", "D", "E", "F"), function(x) sim0(x, j.mu = j.mu, j.var = j.var))
+
+
+
+loss <- function(i, p){
+  p$cp0 <- ifelse(p$tau > i, p$tau - i, 0)
+  deviance(lmer(score ~ tau + cp0 + (tau + cp0|test), data = p))
+}
+
+
+cp_min <- unlist(lapply(p0, function(p) which.min(sapply(1:9, function(i) loss(i, p)))))
+
+
+p0 <- bind_rows(p0)
+p0$cp_min[p0$id == "A"] <- as.numeric(cp_min[1])
+p0$cp_min[p0$id == "B"] <- as.numeric(cp_min[2])
+p0$cp_min[p0$id == "C"] <- as.numeric(cp_min[3])
+p0$cp_min[p0$id == "D"] <- as.numeric(cp_min[4])
+p0$cp_min[p0$id == "E"] <- as.numeric(cp_min[5])
+p0$cp_min[p0$id == "F"] <- as.numeric(cp_min[6])
+
+
+ggplot(p0, aes(x = tau, y = score, colour = test)) +
+  geom_line(size = 3/4) +
+  scale_colour_viridis(discrete = TRUE) +
+  facet_wrap(~id) +
+  #geom_line(aes(y = fit), colour = "red", size = 1) +
+  geom_vline(data = p0, aes(xintercept = cp_min), linetype = "dashed") +
+  xlab("Testing phase") +
+  scale_x_continuous(breaks = c(2,4,6,8)) +
+  theme(panel.background = element_blank(),
+        axis.line = element_line()) 
+```
+
+## Modelling transition
+
+We're not really interested in finding the model that is *best explained by* the data, we're really interested in finding the model that *best explains* the data **if** the data are explained by cognitive decline.  
+
+Ideally this model will have $\beta_1 \approx 0$ when the subject is in a healthy state and $\beta_2 + \beta_1 \leq 0$ when the subject is experiencing cognitive decline.
+
+We seek to maximise $Pr(m_i|y)$ where $Pr(m_i|y) = \frac{Pr(y|m_i)Pr(m_i)}{\sum_{j=1}^{m} Pr(y|m_j)Pr(m_j)}$, $\Pr(y|m_i)$ is the likelihood and $Pr(m_i)$ is a prior probability that represents our beliefs about $\beta_{1i}, \beta_{2i}$.
+
+---
+
+```{r, hold = TRUE}
+loss_p <- function(i){
+  p$cp0 <- ifelse(p$tau > i, p$tau - i, 0)
+  lmer(score ~ tau + cp0 + (tau + cp0|test), data = p)
+}
+
+prior_b1 <- function(x, mean = 0, sd = 1/5){
+  dnorm(x, mean = mean, sd = sd, log = TRUE)
+}
+
+prior_b2 <- function(x, mean = -1, sd = 1/5){
+  dnorm(x, mean = mean, sd = sd, log = TRUE)
+}
+
+g <- data.frame(tau.lwr = double(), 
+                tau.upr = double(),
+                cp.lwr = double(), 
+                cp.upr = double(),
+                cp = integer(),
+                id = character(),
+                row.names = NULL)
+
+for(k in unique(p0$id)){
+  p <- filter(p0, id == k)
+  
+  l <- sapply(2:11, loss_p)
+
+  cp_min <- which.max(sapply(l, function(x) exp(prior_b1(fixef(x)[2L])+prior_b2(fixef(x)[3L]+fixef(x)[2L])+logLik(x))))+1
+  
+  p$cp <- ifelse(p$tau > cp_min, p$tau - cp_min, 0)
+  m1 <- lmer(score ~ tau + cp + (tau + cp|test), data = p)
+  m2 <- lm(score ~ tau + cp, data = p)
+  p0$fit[p0$id == k] <- predict(m2, p)
+  p0$cp_min[p0$id == k] <- cp_min
+  #cat("Subject ", k, "  \nestimated cp = ", cp_min, "  \n")
+  ci <- confint(m1, method = "Wald")[8:10,]
+  #print(ci)
+  g <- rbind(g, data.frame(tau.lwr = ci[2,1], tau.upr = ci[2,2], cp.lwr = ci[3,1], cp.upr = ci[3,2], cp = cp_min, id = k, row.names = NULL))
+}
+
+```
+
+```{r}
+g$cog_dec <- g$tau.lwr <= 0 & g$tau.upr>=0 & g$cp.lwr <0 & g$cp.upr <= 0
+g
+```
+
+---
+
+```{r}
+ggplot(p0, aes(x = tau, y = score, colour = test)) +
+  geom_line(size = 3/4) +
+  scale_colour_viridis(discrete = TRUE) +
+  facet_wrap(~id) +
+  geom_line(aes(y = fit), colour = "red", size = 1) +
+  geom_vline(data = p0, aes(xintercept = cp_min), linetype = "dashed") +
+  xlab("Testing phase") +
+  scale_x_continuous(breaks = c(1,3,5,7,9,11)) +
+  theme(panel.background = element_blank(),
+        axis.line = element_line()) 
+
+```
+
+
+```{r, eval = F}
+library(merTools)
+p <- filter(p0, id == "E")
+p$cp0 <- ifelse(p$tau > 6, p$tau - 6, 0)
+m1 <- lmer(score ~ tau + cp0 + (tau + cp0|test), data = p)
+
+ran <- REsim(m1, n.sims = 1000)
+plotREsim(ran, level = .95)
+```
