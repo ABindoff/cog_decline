@@ -2,6 +2,7 @@
 ####  estimate break-point as a model parameter 
 ####  (rather than as a model selection procedure)
 ####  4th July 2018
+####  see gist https://gist.github.com/mbjoseph/25d649e46602a419f9765638d5a2bfbc
 library(reshape2)
 library(viridis)
 
