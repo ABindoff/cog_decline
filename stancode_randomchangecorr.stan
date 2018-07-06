@@ -1,3 +1,4 @@
+// adapted from https://github.com/sambrilleman/2017-Epidemiology
 data {
   int<lower=0> N;            // number of observations
   int<lower=1> Npat;         // number of individuals  
