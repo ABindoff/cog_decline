@@ -18,7 +18,7 @@ sim <- function(id, j = 9, t = 12, j.mu = 0, j.var = 1){
   s <- data.frame(j.mu = j.mu,
                   j.var = j.var,
                   cp.t = 7,
-                  cp.slope = -abs(rnorm(j, 0, 0.66)))
+                  cp.slope = -abs(rnorm(j, 0, 1)))
   p <- melt(data.frame(apply(s, 1, function(x) tc(x, t))))
   p$tau <- as.double(rep(c(1:t), j))
   p$id <- id
